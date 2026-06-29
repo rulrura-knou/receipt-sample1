@@ -14,6 +14,7 @@ from backend.models.receipt import Receipt
 # ── Neon PostgreSQL ──────────────────────────────────────────────────────────
 _pg_pool = None
 
+
 async def _get_pool():
     global _pg_pool
     import asyncpg
@@ -29,17 +30,26 @@ async def _get_pool():
                     items JSONB DEFAULT '[]',
                     raw_ocr TEXT DEFAULT '',
                     image_filename TEXT DEFAULT '',
+                    image_data BYTEA,
+                    image_mime TEXT DEFAULT 'image/jpeg',
                     category TEXT DEFAULT '기타',
                     memo TEXT DEFAULT '',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
+            # 기존 테이블에 컬럼이 없을 경우 추가
+            await conn.execute("""
+                ALTER TABLE receipts
+                    ADD COLUMN IF NOT EXISTS image_data BYTEA,
+                    ADD COLUMN IF NOT EXISTS image_mime TEXT DEFAULT 'image/jpeg'
+            """)
     return _pg_pool
 
 
 def _row_to_dict(row) -> dict:
     d = dict(row)
+    d.pop("image_data", None)   # 바이너리 데이터는 응답에서 제외
     if isinstance(d.get("items"), str):
         d["items"] = json.loads(d["items"])
     for key in ("created_at", "updated_at"):
@@ -77,7 +87,11 @@ async def list_receipts() -> list[dict]:
     if USE_NEON_DB:
         pool = await _get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM receipts ORDER BY created_at DESC")
+            rows = await conn.fetch(
+                "SELECT id,store_name,date,total_amount,items,raw_ocr,"
+                "image_filename,category,memo,created_at,updated_at "
+                "FROM receipts ORDER BY created_at DESC"
+            )
         return [_row_to_dict(r) for r in rows]
     if USE_VERCEL_KV:
         data = await _redis.get(_KV_KEY)
@@ -89,7 +103,12 @@ async def get_receipt(receipt_id: str) -> dict | None:
     if USE_NEON_DB:
         pool = await _get_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM receipts WHERE id = $1", receipt_id)
+            row = await conn.fetchrow(
+                "SELECT id,store_name,date,total_amount,items,raw_ocr,"
+                "image_filename,category,memo,created_at,updated_at "
+                "FROM receipts WHERE id = $1",
+                receipt_id,
+            )
         return _row_to_dict(row) if row else None
     if USE_VERCEL_KV:
         receipts = json.loads(await _redis.get(_KV_KEY) or "[]")
@@ -98,20 +117,40 @@ async def get_receipt(receipt_id: str) -> dict | None:
     return next((r for r in receipts if r["id"] == receipt_id), None)
 
 
-async def create_receipt(receipt: Receipt) -> dict:
+async def get_receipt_image(receipt_id: str) -> tuple[bytes, str] | None:
+    """이미지 바이트와 MIME 타입 반환 (Neon 전용)."""
+    if not USE_NEON_DB:
+        return None
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT image_data, image_mime FROM receipts WHERE id = $1",
+            receipt_id,
+        )
+    if not row or not row["image_data"]:
+        return None
+    return bytes(row["image_data"]), row["image_mime"] or "image/jpeg"
+
+
+async def create_receipt(
+    receipt: Receipt,
+    image_data: bytes | None = None,
+    image_mime: str = "image/jpeg",
+) -> dict:
     data = receipt.model_dump()
     if USE_NEON_DB:
         pool = await _get_pool()
         async with pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO receipts
-                    (id, store_name, date, total_amount, items, raw_ocr,
-                     image_filename, category, memo, created_at, updated_at)
-                VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11)
+                    (id,store_name,date,total_amount,items,raw_ocr,
+                     image_filename,image_data,image_mime,category,memo,created_at,updated_at)
+                VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)
             """,
                 data["id"], data["store_name"], data["date"], data["total_amount"],
                 json.dumps(data["items"], default=str),
                 data["raw_ocr"], data["image_filename"],
+                image_data, image_mime,
                 data["category"], data["memo"],
                 data["created_at"], data["updated_at"],
             )
@@ -129,15 +168,15 @@ async def create_receipt(receipt: Receipt) -> dict:
 
 async def update_receipt(receipt_id: str, updates: dict) -> dict | None:
     if USE_NEON_DB:
-        pool = await _get_pool()
         updates["updated_at"] = datetime.now()
-        set_clause = ", ".join(
-            f"{k} = ${i+2}" for i, k in enumerate(updates)
-        )
+        set_clause = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
         values = list(updates.values())
+        pool = await _get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"UPDATE receipts SET {set_clause} WHERE id = $1 RETURNING *",
+                f"UPDATE receipts SET {set_clause} WHERE id = $1 "
+                "RETURNING id,store_name,date,total_amount,items,raw_ocr,"
+                "image_filename,category,memo,created_at,updated_at",
                 receipt_id, *values,
             )
         return _row_to_dict(row) if row else None

@@ -7,9 +7,10 @@ import uuid
 import aiofiles
 import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from backend.config import (
-    IMAGES_DIR, USE_VERCEL_BLOB, BLOB_READ_WRITE_TOKEN,
+    IMAGES_DIR, USE_VERCEL_BLOB, BLOB_READ_WRITE_TOKEN, USE_NEON_DB,
 )
 from backend.models.receipt import Receipt, ReceiptUpdate
 from backend.services import ocr_service, storage_service
@@ -20,27 +21,25 @@ _ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _BLOB_API = "https://blob.vercel-storage.com"
 
 
-async def _save_image(image_bytes: bytes, original_filename: str) -> str:
-    """이미지를 저장하고 식별자(로컬 파일명 또는 Blob URL)를 반환한다."""
-    ext = os.path.splitext(original_filename)[1] or ".jpg"
+async def _upload_to_blob(image_bytes: bytes, filename: str, mime: str) -> str:
+    unique_name = f"receipt_{uuid.uuid4().hex}{os.path.splitext(filename)[1] or '.jpg'}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.put(
+            f"{_BLOB_API}/{unique_name}",
+            content=image_bytes,
+            headers={
+                "Authorization": f"Bearer {BLOB_READ_WRITE_TOKEN}",
+                "x-api-version": "7",
+                "Content-Type": mime,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["url"]
+
+
+async def _save_local(image_bytes: bytes, filename: str) -> str:
+    ext = os.path.splitext(filename)[1] or ".jpg"
     unique_name = f"receipt_{uuid.uuid4().hex}{ext}"
-    mime = mimetypes.guess_type(original_filename)[0] or "image/jpeg"
-
-    if USE_VERCEL_BLOB:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.put(
-                f"{_BLOB_API}/{unique_name}",
-                content=image_bytes,
-                headers={
-                    "Authorization": f"Bearer {BLOB_READ_WRITE_TOKEN}",
-                    "x-api-version": "7",
-                    "Content-Type": mime,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()["url"]
-
-    # 로컬 개발: 파일시스템에 저장
     path = os.path.join(IMAGES_DIR, unique_name)
     async with aiofiles.open(path, "wb") as f:
         await f.write(image_bytes)
@@ -55,8 +54,7 @@ async def upload_receipt(file: UploadFile = File(...)):
 
     image_bytes = await file.read()
     filename = file.filename or "receipt.jpg"
-
-    image_identifier = await _save_image(image_bytes, filename)
+    mime = mimetypes.guess_type(filename)[0] or "image/jpeg"
 
     try:
         ocr_result = await ocr_service.parse_receipt(image_bytes, filename)
@@ -64,9 +62,33 @@ async def upload_receipt(file: UploadFile = File(...)):
         raise HTTPException(502, f"OCR 처리 중 오류가 발생했습니다: {e}")
 
     extracted = ocr_service.extract_receipt_info(ocr_result)
-    receipt = Receipt(image_filename=image_identifier, **extracted)
-    saved = await storage_service.create_receipt(receipt)
+    receipt = Receipt(**extracted)
+
+    # 이미지 저장 전략
+    if USE_VERCEL_BLOB:
+        receipt.image_filename = await _upload_to_blob(image_bytes, filename, mime)
+        saved = await storage_service.create_receipt(receipt)
+    elif USE_NEON_DB:
+        # Neon DB에 BYTEA로 저장, API 엔드포인트로 서빙
+        receipt.image_filename = f"/api/receipts/{receipt.id}/image"
+        saved = await storage_service.create_receipt(receipt, image_data=image_bytes, image_mime=mime)
+    else:
+        # 로컬 개발: 파일시스템
+        image_filename = await _save_local(image_bytes, filename)
+        receipt.image_filename = image_filename
+        saved = await storage_service.create_receipt(receipt)
+
     return saved
+
+
+@router.get("/{receipt_id}/image")
+async def get_receipt_image(receipt_id: str):
+    """Neon DB에 저장된 이미지를 바이너리로 반환."""
+    result = await storage_service.get_receipt_image(receipt_id)
+    if not result:
+        raise HTTPException(404, "이미지를 찾을 수 없습니다.")
+    image_bytes, mime = result
+    return Response(content=image_bytes, media_type=mime)
 
 
 @router.get("")

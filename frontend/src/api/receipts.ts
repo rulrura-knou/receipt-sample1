@@ -38,7 +38,8 @@ export async function deleteReceipt(id: string): Promise<void> {
 }
 
 export function imageUrl(filename: string): string {
-  // Vercel Blob URL은 http(s)로 시작 — 그대로 반환
-  if (filename.startsWith('http')) return filename
-  return `/static/images/${filename}`
+  if (!filename) return ''
+  if (filename.startsWith('http')) return filename      // Vercel Blob CDN
+  if (filename.startsWith('/api/')) return filename     // Neon DB 이미지 엔드포인트
+  return `/static/images/${filename}`                   // 로컬 개발
 }
