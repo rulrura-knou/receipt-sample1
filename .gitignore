@@ -20,8 +20,8 @@ venv/
 backend/data/images/*
 !backend/data/images/.gitkeep
 
-# 지출 데이터 (로컬 개발용 — 필요 시 아래 주석 해제)
-# backend/data/receipts.json
+# 지출 데이터 (개인 구매 내역 포함 — 커밋 제외)
+backend/data/receipts.json
 
 node_modules/
 dist/
