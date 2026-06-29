@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef } from 'react'
 
 export interface FilterValues {
   startDate: string
@@ -12,16 +12,26 @@ interface FilterPanelProps {
   onReset?: () => void
 }
 
-const EMPTY: FilterValues = { startDate: '', endDate: '', minAmount: '', maxAmount: '' }
-
 export default function FilterPanel({ onSearch, onReset }: FilterPanelProps) {
-  const [values, setValues] = useState<FilterValues>(EMPTY)
+  const startDateRef = useRef<HTMLInputElement>(null)
+  const endDateRef = useRef<HTMLInputElement>(null)
+  const minAmountRef = useRef<HTMLInputElement>(null)
+  const maxAmountRef = useRef<HTMLInputElement>(null)
 
-  const set = (key: keyof FilterValues) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setValues(prev => ({ ...prev, [key]: e.target.value }))
+  const handleSearch = () => {
+    onSearch?.({
+      startDate: startDateRef.current?.value ?? '',
+      endDate: endDateRef.current?.value ?? '',
+      minAmount: minAmountRef.current?.value ?? '',
+      maxAmount: maxAmountRef.current?.value ?? '',
+    })
+  }
 
   const handleReset = () => {
-    setValues(EMPTY)
+    if (startDateRef.current) startDateRef.current.value = ''
+    if (endDateRef.current) endDateRef.current.value = ''
+    if (minAmountRef.current) minAmountRef.current.value = ''
+    if (maxAmountRef.current) maxAmountRef.current.value = ''
     onReset?.()
   }
 
@@ -36,16 +46,13 @@ export default function FilterPanel({ onSearch, onReset }: FilterPanelProps) {
           <div className="flex items-center gap-2">
             <input
               type="date"
-              value={values.startDate}
-              onChange={set('startDate')}
+              ref={startDateRef}
               className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
             />
             <span className="text-gray-400 text-sm shrink-0">~</span>
             <input
               type="date"
-              value={values.endDate}
-              onChange={set('endDate')}
-              min={values.startDate || undefined}
+              ref={endDateRef}
               className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
             />
           </div>
@@ -59,8 +66,7 @@ export default function FilterPanel({ onSearch, onReset }: FilterPanelProps) {
               type="number"
               placeholder="최소"
               min={0}
-              value={values.minAmount}
-              onChange={set('minAmount')}
+              ref={minAmountRef}
               className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-300"
             />
             <span className="text-gray-400 text-sm shrink-0">~</span>
@@ -68,8 +74,7 @@ export default function FilterPanel({ onSearch, onReset }: FilterPanelProps) {
               type="number"
               placeholder="최대"
               min={0}
-              value={values.maxAmount}
-              onChange={set('maxAmount')}
+              ref={maxAmountRef}
               className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-300"
             />
           </div>
@@ -84,7 +89,7 @@ export default function FilterPanel({ onSearch, onReset }: FilterPanelProps) {
             초기화
           </button>
           <button
-            onClick={() => onSearch?.(values)}
+            onClick={handleSearch}
             className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
           >
             검색
