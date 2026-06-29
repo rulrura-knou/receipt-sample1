@@ -38,5 +38,7 @@ export async function deleteReceipt(id: string): Promise<void> {
 }
 
 export function imageUrl(filename: string): string {
+  // Vercel Blob URL은 http(s)로 시작 — 그대로 반환
+  if (filename.startsWith('http')) return filename
   return `/static/images/${filename}`
 }

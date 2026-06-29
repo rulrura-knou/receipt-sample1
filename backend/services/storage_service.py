@@ -4,21 +4,36 @@ import json
 import os
 from datetime import datetime
 
-import aiofiles
-
-from backend.config import RECEIPTS_FILE
+from backend.config import (
+    RECEIPTS_FILE, USE_VERCEL_KV,
+    KV_REST_API_URL, KV_REST_API_TOKEN,
+)
 from backend.models.receipt import Receipt
+
+_KV_KEY = "receipts"
+
+if USE_VERCEL_KV:
+    from upstash_redis.asyncio import Redis as _AsyncRedis
+    _redis = _AsyncRedis(url=KV_REST_API_URL, token=KV_REST_API_TOKEN)
 
 
 async def _read_all() -> list[dict]:
+    if USE_VERCEL_KV:
+        data = await _redis.get(_KV_KEY)
+        return json.loads(data) if data else []
     if not os.path.exists(RECEIPTS_FILE):
         return []
+    import aiofiles
     async with aiofiles.open(RECEIPTS_FILE, "r", encoding="utf-8") as f:
         content = await f.read()
     return json.loads(content) if content.strip() else []
 
 
 async def _write_all(receipts: list[dict]) -> None:
+    if USE_VERCEL_KV:
+        await _redis.set(_KV_KEY, json.dumps(receipts, ensure_ascii=False, default=str))
+        return
+    import aiofiles
     async with aiofiles.open(RECEIPTS_FILE, "w", encoding="utf-8") as f:
         await f.write(json.dumps(receipts, ensure_ascii=False, indent=2, default=str))
 

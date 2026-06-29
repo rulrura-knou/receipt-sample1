@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from backend.config import IMAGES_DIR
+from backend.config import IMAGES_DIR, USE_VERCEL_BLOB
 from backend.routers import receipts
 
 app = FastAPI(
@@ -11,18 +10,19 @@ app = FastAPI(
     description="영수증 OCR 기반 지출 관리 백엔드",
 )
 
-# React 개발서버(3000, 5173) 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(receipts.router)
 
-# 업로드된 영수증 이미지를 /static/images/{filename} 으로 제공
-app.mount("/static/images", StaticFiles(directory=IMAGES_DIR), name="images")
+# 로컬 개발 전용: Vercel Blob 사용 시 이미지는 CDN에서 직접 서빙
+if not USE_VERCEL_BLOB:
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/static/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
 
 @app.get("/")
