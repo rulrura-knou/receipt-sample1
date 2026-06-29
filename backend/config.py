@@ -5,12 +5,16 @@ load_dotenv()
 
 UPSTAGE_API_KEY: str = os.getenv("UPSTAGE_API_KEY", "")
 
-# Vercel KV (Upstash Redis) — 설정 시 파일 스토리지 대신 사용
+# Neon PostgreSQL — Vercel 연동 시 POSTGRES_URL 자동 주입, 직접 설정 시 DATABASE_URL
+DATABASE_URL: str = os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL", "")
+USE_NEON_DB: bool = bool(DATABASE_URL)
+
+# Vercel KV (Upstash Redis) — Neon 미사용 시 폴백
 KV_REST_API_URL: str = os.getenv("KV_REST_API_URL", "")
 KV_REST_API_TOKEN: str = os.getenv("KV_REST_API_TOKEN", "")
-USE_VERCEL_KV: bool = bool(KV_REST_API_URL)
+USE_VERCEL_KV: bool = bool(KV_REST_API_URL) and not USE_NEON_DB
 
-# Vercel Blob — 설정 시 로컬 이미지 저장 대신 사용
+# Vercel Blob — 이미지 저장
 BLOB_READ_WRITE_TOKEN: str = os.getenv("BLOB_READ_WRITE_TOKEN", "")
 USE_VERCEL_BLOB: bool = bool(BLOB_READ_WRITE_TOKEN)
 
