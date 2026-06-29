@@ -37,3 +37,5 @@ data/receipts.json
 *.png
 !test_assets/*.jpg
 !test_assets/*.png
+
+.vercel
